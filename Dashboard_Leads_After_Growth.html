@@ -481,6 +481,7 @@ function fetchLiveData(timeoutMs = 12000){
 
 async function loadData(isManualRefresh){
   const btn = document.getElementById("btnRefresh");
+  const isFirstLoad = state.rows.length === 0; // solo la carga inicial reinicia los filtros
   btn.classList.add("loading");
   btn.disabled = true;
   hideBanner();
@@ -490,11 +491,11 @@ async function loadData(isManualRefresh){
     state.rows = rows;
     state.source = "live";
     state.lastUpdated = new Date();
-    rebuildFilterOptions(true);
+    rebuildFilterOptions(isFirstLoad);
     applyFilters();
     updateStatusPill();
   } catch(err){
-    if (state.rows.length === 0){
+    if (isFirstLoad){
       // primera carga fallida -> usar snapshot
       state.rows = SNAPSHOT_DATA;
       state.source = "snapshot";
@@ -503,7 +504,7 @@ async function loadData(isManualRefresh){
       applyFilters();
       showBanner("No se pudo conectar en vivo con Google Sheets (revisa que la hoja esté compartida como “Cualquiera con el enlace — Lector”). Mostrando datos de referencia del " + SNAPSHOT_TIMESTAMP + ".", true);
     } else {
-      showBanner("No se pudo actualizar en vivo ahora mismo. Se mantienen los últimos datos cargados.", true);
+      showBanner("No se pudo actualizar en vivo ahora mismo. Se mantienen los últimos datos y filtros cargados.", true);
     }
     updateStatusPill();
   } finally {
