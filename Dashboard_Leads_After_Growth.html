@@ -87,6 +87,13 @@
     position:relative;overflow:hidden;
   }
   .kpi-dot{position:absolute;top:16px;right:16px;width:8px;height:8px;border-radius:50%;}
+  .kpi-card.kpi-clickable{cursor:pointer;transition:transform .12s ease, box-shadow .12s ease, background .12s ease;}
+  .kpi-card.kpi-clickable:hover{box-shadow:0 4px 14px rgba(0,0,0,.09);transform:translateY(-1px);}
+  .kpi-card.kpi-clickable.active{box-shadow:0 4px 14px rgba(0,0,0,.09);}
+  .kpi-hint{
+    margin-top:8px;font-size:10px;font-weight:500;color:inherit;opacity:.65;
+    display:flex;align-items:center;gap:4px;
+  }
   .kpi-value{
     font-family:"Source Serif 4",serif;font-weight:200;font-size:38px;
     color:var(--ink);line-height:1;margin-bottom:6px;
@@ -381,6 +388,7 @@ const state = {
   desde: null,
   hasta: null,
   search: "",
+  activeQuickFilter: null,
 };
 
 /* ============================================================
@@ -583,6 +591,7 @@ function renderMultiSelect(field, options){
       const val = cb.value;
       if (cb.checked) state.filters[field].add(val);
       else state.filters[field].delete(val);
+      state.activeQuickFilter = null;
       updateMsButtonLabel(field, options.length);
       applyFilters();
     });
@@ -593,12 +602,14 @@ function renderMultiSelect(field, options){
   if (allBtn) allBtn.addEventListener("click", () => {
     options.forEach(o => state.filters[field].add(o));
     panel.querySelectorAll("[data-cb]").forEach(cb => cb.checked = true);
+    state.activeQuickFilter = null;
     updateMsButtonLabel(field, options.length);
     applyFilters();
   });
   if (noneBtn) noneBtn.addEventListener("click", () => {
     state.filters[field].clear();
     panel.querySelectorAll("[data-cb]").forEach(cb => cb.checked = false);
+    state.activeQuickFilter = null;
     updateMsButtonLabel(field, options.length);
     applyFilters();
   });
@@ -680,29 +691,91 @@ function applyFilters(){
    KPIs
    ============================================================ */
 const KPI_DEFS = [
-  { key:"enviados",   label:"Total enviados",                color:"var(--ink)",
+  { key:"enviados",   label:"Total enviados",                color:"#232323",
     calc: rows => rows.length },
-  { key:"rebotes",     label:"Rebotes / correos erróneos",    color:"var(--red)",
+  { key:"rebotes",     label:"Rebotes / correos erróneos",    color:"#E15656",
     calc: rows => rows.filter(r => r.respuesta === "Devuelto" || r.respuesta === "Error").length },
-  { key:"sinresp",     label:"Sin respuesta (2ª oportunidad)", color:"var(--ink)",
+  { key:"sinresp",     label:"Sin respuesta (2ª oportunidad)", color:"#232323", quick:true,
     calc: rows => rows.filter(r => r.respuesta === "No").length },
-  { key:"respreal",    label:"Respuestas reales",             color:"var(--cyan)",
+  { key:"respreal",    label:"Respuestas reales",             color:"#2BD6D9", quick:true,
     calc: rows => rows.filter(r => r.respuesta === "Sí" || r.respuesta === "Si").length },
-  { key:"conversacion",label:"En conversación",                color:"var(--cyan)",
+  { key:"conversacion",label:"En conversación",                color:"#2BD6D9", quick:true,
     calc: rows => rows.filter(r => (r.situacion||"").startsWith("Conversación en curso")).length },
-  { key:"citas",       label:"Citas concertadas",              color:"#188A54",
+  { key:"citas",       label:"Citas concertadas",              color:"#188A54", quick:true,
     calc: rows => rows.filter(r => /agendad/i.test(r.situacion||"")).length },
 ];
 
+function hexToRgba(hex, alpha){
+  const h = hex.replace("#","");
+  const r = parseInt(h.substring(0,2),16);
+  const g = parseInt(h.substring(2,4),16);
+  const b = parseInt(h.substring(4,6),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function renderKpis(rows){
   const el = document.getElementById("kpiRow");
-  el.innerHTML = KPI_DEFS.map(k => `
-    <div class="kpi-card">
+  el.innerHTML = KPI_DEFS.map(k => {
+    const isActive = state.activeQuickFilter === k.key;
+    const classes = "kpi-card" + (k.quick ? " kpi-clickable" : "") + (isActive ? " active" : "");
+    const bg = isActive ? hexToRgba(k.color, 0.12) : "";
+    const hint = k.quick ? `<div class="kpi-hint" style="color:${k.color}">${isActive ? "Quitar filtro ✕" : "Ver registros →"}</div>` : "";
+    return `
+    <div class="${classes}" ${k.quick ? `data-quick="${k.key}"` : ""} style="${bg ? `background:${bg}` : ""}">
       <div class="kpi-dot" style="background:${k.color}"></div>
       <div class="kpi-value" style="color:${k.color}">${k.calc(rows).toLocaleString('es-ES')}</div>
       <div class="kpi-label">${k.label}</div>
+      ${hint}
     </div>
-  `).join("");
+  `;
+  }).join("");
+
+  el.querySelectorAll("[data-quick]").forEach(card => {
+    card.addEventListener("click", () => applyQuickFilter(card.getAttribute("data-quick")));
+  });
+}
+
+function applyQuickFilter(key){
+  if (state.activeQuickFilter === key){
+    clearAllFilters();
+    applyFilters();
+    return;
+  }
+
+  // Al aplicar un KPI-filtro partimos de un estado limpio para que se vea
+  // exactamente ese grupo de registros, sin mezclarlo con otros filtros activos.
+  state.desde = null; state.hasta = null; state.search = "";
+  document.getElementById("fDesde").value = "";
+  document.getElementById("fHasta").value = "";
+  document.getElementById("fSearch").value = "";
+  MS_FIELDS.forEach(f => state.filters[f].clear());
+
+  state.activeQuickFilter = key;
+  const respuestaOpts = uniqueSorted(state.rows, "respuesta");
+  const situacionOpts = uniqueSorted(state.rows, "situacion");
+
+  if (key === "sinresp"){
+    state.filters.respuesta = new Set(respuestaOpts.filter(o => o === "No"));
+  } else if (key === "respreal"){
+    state.filters.respuesta = new Set(respuestaOpts.filter(o => o === "Sí" || o === "Si"));
+  } else if (key === "conversacion"){
+    state.filters.situacion = new Set(situacionOpts.filter(o => o.startsWith("Conversación en curso")));
+  } else if (key === "citas"){
+    state.filters.situacion = new Set(situacionOpts.filter(o => /agendad/i.test(o)));
+  }
+
+  rebuildFilterOptions(false); // re-renderiza los desplegables reflejando la selección ya aplicada
+  applyFilters();
+}
+
+function clearAllFilters(){
+  state.desde = null; state.hasta = null; state.search = "";
+  document.getElementById("fDesde").value = "";
+  document.getElementById("fHasta").value = "";
+  document.getElementById("fSearch").value = "";
+  MS_FIELDS.forEach(f => state.filters[f].clear());
+  state.activeQuickFilter = null;
+  rebuildFilterOptions(true);
 }
 
 /* ============================================================
@@ -798,24 +871,22 @@ function downloadCsv(){
    ============================================================ */
 document.getElementById("fDesde").addEventListener("change", (e) => {
   state.desde = e.target.value ? new Date(e.target.value + "T00:00:00") : null;
+  state.activeQuickFilter = null;
   applyFilters();
 });
 document.getElementById("fHasta").addEventListener("change", (e) => {
   state.hasta = e.target.value ? new Date(e.target.value + "T23:59:59") : null;
+  state.activeQuickFilter = null;
   applyFilters();
 });
 document.getElementById("fSearch").addEventListener("input", (e) => {
   state.search = e.target.value.trim().toLowerCase();
+  state.activeQuickFilter = null;
   applyFilters();
 });
 
 document.getElementById("btnClear").addEventListener("click", () => {
-  state.desde = null; state.hasta = null; state.search = "";
-  document.getElementById("fDesde").value = "";
-  document.getElementById("fHasta").value = "";
-  document.getElementById("fSearch").value = "";
-  MS_FIELDS.forEach(f => state.filters[f].clear());
-  rebuildFilterOptions(true);
+  clearAllFilters();
   applyFilters();
 });
 
